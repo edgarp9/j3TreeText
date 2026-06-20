@@ -2,6 +2,9 @@
 
 j3TreeText is a Windows desktop editor and command-line tool for tree-structured plain text documents stored in a SQLite database.
 
+<img width="409" height="353" alt="j3TreeText" src="https://github.com/user-attachments/assets/2a54e50d-31be-447f-bc55-eac132fb3cfd" />
+
+
 ## Features
 
 - Stores a document tree in a local SQLite database.
