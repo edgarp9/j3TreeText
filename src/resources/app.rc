@@ -1,0 +1,5 @@
+#define IDI_APP_ICON 1
+#define RT_MANIFEST 24
+
+IDI_APP_ICON ICON "icon.ico"
+1 RT_MANIFEST "resources/app.manifest"
