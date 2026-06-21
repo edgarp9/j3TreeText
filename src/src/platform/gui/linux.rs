@@ -14,11 +14,12 @@ use gtk4 as gtk;
 
 use crate::app::App;
 use crate::domain::{
-    find_next_literal, replace_all_literal, toggle_editor_word_wrap, AppearanceTheme,
-    DirtyTabDecision, Document, DocumentSearchResult, DocumentTabSource, DocumentTabViewState,
-    DomainError, EditorFontSettings, LoadedTabMetadataUpdate, Node, OpenDocumentTabInput, OpenTabs,
-    ReplaceAllError, SiblingMoveDirection, SplitterSettings, TextEncoding, TextMatch, UiLanguage,
-    UiSettings, WindowSettings, APP_AUTHOR_URL, APP_DISPLAY_NAME, APP_ICON_PNG_FILE_NAME,
+    app_about_title, app_version_label, find_next_literal, replace_all_literal,
+    toggle_editor_word_wrap, AppearanceTheme, DirtyTabDecision, Document, DocumentSearchResult,
+    DocumentTabSource, DocumentTabViewState, DomainError, EditorFontSettings,
+    LoadedTabMetadataUpdate, Node, OpenDocumentTabInput, OpenTabs, ReplaceAllError,
+    SiblingMoveDirection, SplitterSettings, TextEncoding, TextMatch, UiLanguage, UiSettings,
+    WindowSettings, APP_AUTHOR_URL, APP_DISPLAY_NAME, APP_ICON_PNG_FILE_NAME,
     APP_ICON_SVG_FILE_NAME, APP_LINUX_APPLICATION_ID, MAX_EDITOR_FONT_SIZE_PT,
     MIN_EDITOR_FONT_SIZE_PT, ROOT_NODE_ID, SEARCH_RESULT_LIMIT,
 };
@@ -51,6 +52,8 @@ const TREE_INDENT_PX: i32 = 18;
 const TREE_ROW_HORIZONTAL_PADDING_PX: i32 = 6;
 const TREE_ROW_VERTICAL_PADDING_PX: i32 = 3;
 const TREE_EXPANDER_HIT_SIZE_PX: i32 = 20;
+const ABOUT_DIALOG_WIDTH_PX: i32 = 540;
+const ABOUT_DIALOG_HEIGHT_PX: i32 = 360;
 const WIN32_QUESTION_DEFAULT_RESPONSE: gtk::ResponseType = gtk::ResponseType::Yes;
 const TEXT_FILE_MIB_LIMIT: usize = TEXT_FILE_BYTE_LIMIT / 1024 / 1024;
 const REPLACE_ALL_OUTPUT_BYTE_LIMIT: usize = TEXT_FILE_BYTE_LIMIT;
@@ -2112,11 +2115,15 @@ fn about_action(state: &Rc<RefCell<LinuxState>>) -> Result<(), AppError> {
         )
     };
     let text = ui_text(language);
+    let title = app_about_title();
+    let version_label = app_version_label();
+    let message = text.about_message(env!("CARGO_PKG_VERSION"));
     show_about_dialog(
         Some(window.upcast_ref()),
         text,
-        text.about_title(),
-        &text.about_message(env!("CARGO_PKG_VERSION")),
+        &title,
+        &version_label,
+        &message,
     );
     Ok(())
 }
@@ -8332,17 +8339,9 @@ impl UiText {
         }
     }
 
-    fn about_title(self) -> &'static str {
+    fn about_message(self, _version: &str) -> String {
         match self.language {
-            UiLanguage::Korean => "j3TreeText 정보",
-            UiLanguage::English => "About j3TreeText",
-        }
-    }
-
-    fn about_message(self, version: &str) -> String {
-        match self.language {
-            UiLanguage::Korean => format!("j3TreeText {version}"),
-            UiLanguage::English => format!("j3TreeText {version}"),
+            UiLanguage::Korean | UiLanguage::English => crate::infra::release_notices::about_text(),
         }
     }
 
@@ -8728,24 +8727,54 @@ fn show_info_message(parent: Option<&gtk::Window>, title: &str, message: &str) {
     );
 }
 
-fn show_about_dialog(parent: Option<&gtk::Window>, text: UiText, title: &str, message: &str) {
-    let dialog = gtk::Dialog::builder().title(title).modal(true).build();
-    dialog.set_resizable(false);
+fn show_about_dialog(
+    parent: Option<&gtk::Window>,
+    text: UiText,
+    title: &str,
+    version_label_text: &str,
+    message: &str,
+) {
+    let dialog = gtk::Dialog::builder()
+        .title(title)
+        .modal(true)
+        .default_width(ABOUT_DIALOG_WIDTH_PX)
+        .default_height(ABOUT_DIALOG_HEIGHT_PX)
+        .build();
+    dialog.set_resizable(true);
     if let Some(parent) = parent {
         dialog.set_transient_for(Some(parent));
     }
 
     let content_area = dialog.content_area();
-    content_area.set_spacing(10);
-    content_area.set_margin_top(18);
+    content_area.set_spacing(8);
+    content_area.set_margin_top(12);
     content_area.set_margin_bottom(12);
-    content_area.set_margin_start(24);
-    content_area.set_margin_end(24);
+    content_area.set_margin_start(12);
+    content_area.set_margin_end(12);
 
-    let message_label = gtk::Label::new(Some(message));
-    message_label.set_xalign(0.0);
-    message_label.set_wrap(true);
-    content_area.append(&message_label);
+    let version_label = gtk::Label::new(Some(version_label_text));
+    version_label.set_halign(gtk::Align::Start);
+    version_label.set_selectable(true);
+    content_area.append(&version_label);
+
+    let about_text = gtk::TextView::new();
+    about_text.set_editable(false);
+    about_text.set_cursor_visible(false);
+    about_text.set_monospace(true);
+    about_text.set_wrap_mode(gtk::WrapMode::WordChar);
+    about_text.buffer().set_text(message);
+
+    let scroller = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Automatic)
+        .vscrollbar_policy(gtk::PolicyType::Automatic)
+        .hexpand(true)
+        .vexpand(true)
+        .child(&about_text)
+        .build();
+    content_area.append(&scroller);
+
+    let footer = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    footer.set_hexpand(true);
 
     let link = gtk::LinkButton::with_label(APP_AUTHOR_URL, APP_AUTHOR_URL);
     link.set_halign(gtk::Align::Start);
@@ -8753,19 +8782,42 @@ fn show_about_dialog(parent: Option<&gtk::Window>, text: UiText, title: &str, me
         let dialog = dialog.clone();
         link.connect_activate_link(move |button| {
             button.set_visited(true);
-            gtk::show_uri(Some(&dialog), APP_AUTHOR_URL, gdk::CURRENT_TIME);
+            if let Err(error) = open_about_project_url() {
+                show_gtk_error_message(
+                    Some(dialog.upcast_ref()),
+                    APP_DISPLAY_NAME,
+                    &error.user_message(),
+                );
+            }
             glib::Propagation::Stop
         });
     }
-    content_area.append(&link);
+    footer.append(&link);
 
-    let ok_button = dialog.add_button(text.ok_button(), gtk::ResponseType::Ok);
+    let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    spacer.set_hexpand(true);
+    footer.append(&spacer);
+
+    let ok_button = gtk::Button::with_label(text.ok_button());
     ok_button.set_receives_default(true);
+    {
+        let dialog = dialog.clone();
+        ok_button.connect_clicked(move |_| {
+            dialog.response(gtk::ResponseType::Ok);
+        });
+    }
+    footer.append(&ok_button);
+    content_area.append(&footer);
+
     dialog.set_default_widget(Some(&ok_button));
     gtk::prelude::GtkWindowExt::set_focus(&dialog, Some(&ok_button));
-    dialog.set_default_response(gtk::ResponseType::Ok);
 
     let _ = run_dialog_blocking(&dialog);
+}
+
+fn open_about_project_url() -> Result<(), AppError> {
+    gio::AppInfo::launch_default_for_uri(APP_AUTHOR_URL, None::<&gio::AppLaunchContext>)
+        .map_err(|source| AppError::platform("open about link", source.to_string()))
 }
 
 fn show_gtk_error_message(parent: Option<&gtk::Window>, title: &str, message: &str) {
@@ -10344,6 +10396,56 @@ mod tests {
         assert!(actions.word_wrap.is_enabled());
         assert!(actions.editor_font.is_enabled());
         assert!(actions.about.is_enabled());
+    }
+
+    #[test]
+    fn about_message_includes_license_notice_paths() {
+        let english = ui_text(UiLanguage::English).about_message("1.2.3");
+        assert!(english.contains("j3TreeText"));
+        assert!(english
+            .contains("License: GNU General Public License v3.0 or later (GPL-3.0-or-later)"));
+        assert!(english.contains("Copyright: Copyright (C) 2026 edgarbak9@gmail.com"));
+        assert!(english.contains("Full license text:\nLICENSE"));
+        assert!(english.contains("Source code for this release:\nhttps://github.com/edgarp9"));
+        assert!(english.contains("Third-Party Notices"));
+        assert!(english.contains("THIRD_PARTY_NOTICES.txt"));
+        assert!(english.contains("- THIRD_PARTY_NOTICES.txt"));
+        assert!(english.contains("WARRANTY"));
+
+        let korean = ui_text(UiLanguage::Korean).about_message("1.2.3");
+        assert!(korean.contains("j3TreeText"));
+        assert!(
+            korean.contains("License: GNU General Public License v3.0 or later (GPL-3.0-or-later)")
+        );
+        assert!(korean.contains("Copyright: Copyright (C) 2026 edgarbak9@gmail.com"));
+        assert!(korean.contains("Full license text:\nLICENSE"));
+        assert!(korean.contains("Source code for this release:\nhttps://github.com/edgarp9"));
+        assert!(korean.contains("Third-Party Notices"));
+        assert!(korean.contains("THIRD_PARTY_NOTICES.txt"));
+        assert!(korean.contains("- THIRD_PARTY_NOTICES.txt"));
+        assert!(korean.contains("WARRANTY"));
+    }
+
+    #[test]
+    fn about_dialog_uses_scrollable_read_only_body_and_footer_actions() {
+        let source = include_str!("linux.rs");
+        let body = rust_function_body(source, "show_about_dialog");
+
+        assert!(source.contains("const ABOUT_DIALOG_WIDTH_PX: i32 = 540;"));
+        assert!(source.contains("const ABOUT_DIALOG_HEIGHT_PX: i32 = 360;"));
+        assert!(body.contains(".default_width(ABOUT_DIALOG_WIDTH_PX)"));
+        assert!(body.contains(".default_height(ABOUT_DIALOG_HEIGHT_PX)"));
+        assert!(body.contains("let version_label = gtk::Label::new(Some(version_label_text));"));
+        assert!(body.contains("let about_text = gtk::TextView::new();"));
+        assert!(body.contains("about_text.set_editable(false);"));
+        assert!(body.contains("about_text.set_cursor_visible(false);"));
+        assert!(body.contains("about_text.buffer().set_text(message);"));
+        assert!(body.contains("gtk::ScrolledWindow::builder()"));
+        assert!(body
+            .contains("let link = gtk::LinkButton::with_label(APP_AUTHOR_URL, APP_AUTHOR_URL);"));
+        assert!(body.contains("open_about_project_url()"));
+        assert!(body.contains("let ok_button = gtk::Button::with_label(text.ok_button());"));
+        assert!(body.contains("dialog.response(gtk::ResponseType::Ok);"));
     }
 
     #[test]

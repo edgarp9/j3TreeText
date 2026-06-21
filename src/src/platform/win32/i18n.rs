@@ -1,4 +1,4 @@
-use crate::domain::{AppearanceTheme, TextEncoding, UiLanguage, APP_AUTHOR_URL};
+use crate::domain::{AppearanceTheme, TextEncoding, UiLanguage};
 use crate::error::{
     AppError, IoUserMessage, PlatformUserMessage, SqliteUserMessage, TextEncodingUserMessage,
     TextFileTooLargeUserMessage,
@@ -686,25 +686,17 @@ impl UiText {
         }
     }
 
-    pub(super) fn about_title(self) -> &'static str {
+    pub(super) fn about_message(self, _version: &str) -> String {
         match self.language {
-            UiLanguage::Korean => "j3TreeText 정보",
-            UiLanguage::English => "About j3TreeText",
+            UiLanguage::Korean | UiLanguage::English => crate::infra::release_notices::about_text(),
         }
     }
 
-    pub(super) fn about_message(self, version: &str) -> String {
+    pub(super) fn ok_button(self) -> &'static str {
         match self.language {
-            UiLanguage::Korean => format!("j3TreeText {version}"),
-            UiLanguage::English => format!("j3TreeText {version}"),
+            UiLanguage::Korean => "확인",
+            UiLanguage::English => "OK",
         }
-    }
-
-    pub(super) fn about_hyperlink_content(self, version: &str) -> String {
-        format!(
-            "{}\n\n<A HREF=\"{APP_AUTHOR_URL}\">{APP_AUTHOR_URL}</A>",
-            self.about_message(version)
-        )
     }
 
     pub(super) fn open_import_document(self) -> &'static str {
@@ -886,14 +878,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn about_hyperlink_content_uses_task_dialog_anchor() {
-        assert_eq!(
-            ui_text(UiLanguage::English).about_hyperlink_content("1.2.3"),
-            "j3TreeText 1.2.3\n\n<A HREF=\"https://github.com/edgarp9\">https://github.com/edgarp9</A>"
-        );
-        assert_eq!(
-            ui_text(UiLanguage::Korean).about_hyperlink_content("1.2.3"),
-            "j3TreeText 1.2.3\n\n<A HREF=\"https://github.com/edgarp9\">https://github.com/edgarp9</A>"
-        );
+    fn about_message_includes_release_notice_paths() {
+        let english = ui_text(UiLanguage::English).about_message("1.2.3");
+        assert!(english.contains("j3TreeText"));
+        assert!(english.contains("Copyright: Copyright (C) 2026 edgarbak9@gmail.com"));
+        assert!(english
+            .contains("License: GNU General Public License v3.0 or later (GPL-3.0-or-later)"));
+        assert!(english.contains("Full license text:\nLICENSE"));
+        assert!(english.contains("Source code for this release:\nhttps://github.com/edgarp9"));
+        assert!(english.contains("THIRD_PARTY_NOTICES.txt"));
+
+        let korean = ui_text(UiLanguage::Korean).about_message("1.2.3");
+        assert!(korean.contains("j3TreeText"));
+        assert!(korean.contains("Copyright: Copyright (C) 2026 edgarbak9@gmail.com"));
+        assert!(korean.contains("GPL-3.0-or-later"));
+        assert!(korean.contains("Full license text:\nLICENSE"));
+        assert!(korean.contains("Source code for this release:\nhttps://github.com/edgarp9"));
+        assert!(korean.contains("THIRD_PARTY_NOTICES.txt"));
     }
 }

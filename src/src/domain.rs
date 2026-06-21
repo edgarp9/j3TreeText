@@ -12,8 +12,31 @@ mod tests;
 pub const APP_DISPLAY_NAME: &str = "j3TreeText";
 pub const APP_LINUX_APPLICATION_ID: &str = "io.github.edgarp9.j3TreeText";
 pub const APP_AUTHOR_URL: &str = "https://github.com/edgarp9";
+pub const APP_PROJECT_COPYRIGHT: &str =
+    "확인 필요: project copyright holder is not declared in Cargo.toml or project notices.";
+pub const APP_PROJECT_LICENSE: &str = "GPL-3.0-or-later";
+pub const APP_THIRD_PARTY_PACKAGE_COUNT: usize = 91;
+pub const APP_THIRD_PARTY_LICENSE_EXPRESSIONS: &[&str] = &[
+    "(Apache-2.0 OR MIT) AND BSD-3-Clause",
+    "(MIT OR Apache-2.0) AND Unicode-3.0",
+    "Apache-2.0 OR MIT",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "MIT OR Apache-2.0",
+    "MIT/Apache-2.0",
+    "Unlicense OR MIT",
+    "Zlib",
+];
 pub const APP_ICON_SVG_FILE_NAME: &str = "icon.svg";
 pub const APP_ICON_PNG_FILE_NAME: &str = "icon.png";
+
+pub fn app_about_title() -> String {
+    format!("About {APP_DISPLAY_NAME}")
+}
+
+pub fn app_version_label() -> String {
+    format!("{APP_DISPLAY_NAME} {}", env!("CARGO_PKG_VERSION"))
+}
 
 pub use document_tree::{
     Document, DocumentSearchResult, Node, NodeSiblingOrderUpdate, SiblingMoveDirection,

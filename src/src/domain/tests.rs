@@ -2,6 +2,42 @@ use super::*;
 
 const REPLACE_ALL_TEST_OUTPUT_LIMIT: usize = 1024;
 
+#[test]
+fn third_party_license_about_summary_matches_notice_inventory() {
+    let notices = include_str!("../../THIRD_PARTY_NOTICES.txt");
+    let mut in_summary = false;
+    let mut package_count = 0usize;
+    let mut license_expressions = Vec::new();
+
+    for line in notices.lines() {
+        if line == "License Summary" {
+            in_summary = true;
+            continue;
+        }
+        if in_summary && line == "Embedded Resource Inventory" {
+            break;
+        }
+
+        if !in_summary {
+            continue;
+        }
+        if let Some(license) = line.strip_prefix("License expression: ") {
+            license_expressions.push(license.to_owned());
+        } else if let Some(count) = line.strip_prefix("Count: ") {
+            package_count += count
+                .parse::<usize>()
+                .unwrap_or_else(|error| panic!("invalid license summary count `{line}`: {error}"));
+        }
+    }
+
+    let expected_license_expressions = APP_THIRD_PARTY_LICENSE_EXPRESSIONS
+        .iter()
+        .map(|license| (*license).to_owned())
+        .collect::<Vec<_>>();
+    assert_eq!(package_count, APP_THIRD_PARTY_PACKAGE_COUNT);
+    assert_eq!(license_expressions, expected_license_expressions);
+}
+
 fn all_ui_setting_keys() -> [&'static str; 16] {
     [
         SETTING_WINDOW_X,

@@ -7,6 +7,7 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $commonPath = Join-Path $repoRoot "src\platform\win32\common.rs"
+$dispatchPath = Join-Path $repoRoot "src\platform\win32\commands\dispatch.rs"
 $constants = @{}
 
 foreach ($line in Get-Content -LiteralPath $commonPath) {
@@ -19,6 +20,13 @@ foreach ($line in Get-Content -LiteralPath $commonPath) {
 
 if (-not $windowClassName) {
     throw "WINDOW_CLASS_NAME was not found in $commonPath"
+}
+
+$dispatchSource = Get-Content -LiteralPath $dispatchPath -Raw
+if ($dispatchSource -match 'const ABOUT_DIALOG_CLASS_NAME: &str = "([^"]+)";') {
+    $aboutDialogClassName = $matches[1]
+} else {
+    throw "ABOUT_DIALOG_CLASS_NAME was not found in $dispatchPath"
 }
 
 $requiredConstants = @(
@@ -382,7 +390,7 @@ function Resolve-AppWindow([IntPtr]$candidate) {
 
 function Find-Dialog($processId, [string]$titlePattern = $null) {
     $dialogs = Get-ProcessTopWindows $processId |
-        Where-Object { $_.Class -eq "#32770" -and $_.Visible }
+        Where-Object { ($_.Class -eq "#32770" -or $_.Class -eq $aboutDialogClassName) -and $_.Visible }
     if ($titlePattern) {
         $dialogs = $dialogs | Where-Object { $_.Title -match $titlePattern }
     }

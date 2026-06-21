@@ -1,0 +1,47 @@
+j3TreeText
+
+Copyright: Copyright (C) 2026 edgarbak9@gmail.com
+License: GNU General Public License v3.0 or later (GPL-3.0-or-later)
+
+
+License
+-------
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A
+PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+Full license text:
+LICENSE
+
+
+Source Code
+-----------
+
+This binary release is distributed under GPL-3.0-or-later.
+
+Source code for this release:
+https://github.com/edgarp9 
+
+
+Third-Party Notices
+-------------------
+
+This program uses third-party open source components. Their licenses,
+copyright notices, source URLs, required notices, and full license texts are
+listed in:
+
+THIRD_PARTY_NOTICES.txt
+
+
+Release Files
+-------------
+
+The source and binary distributions for this release should include:
+
+- LICENSE
+- THIRD_PARTY_NOTICES.txt

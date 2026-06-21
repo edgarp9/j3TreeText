@@ -67,6 +67,16 @@ Linux application id에 ASCII 대문자가 있으므로 KDE/Plasma taskbar fallb
 
 GTK application id와 기본 창 아이콘 이름은 `io.github.edgarp9.j3TreeText`로 유지한다. 개발 실행이나 직접 실행에서도 창 아이콘이 보이도록 GTK 시작 시 실행 파일 폴더와 현재 작업 폴더에서 `icon.svg`, `icon.png` 순서로 런타임 아이콘 파일을 찾고, 찾은 파일을 창 realized 시점의 GDK toplevel icon list에도 설정한다.
 
+## 라이선스 고지 정책
+
+프로젝트 라이선스는 `GPL-3.0-or-later`이며, 배포 산출물에는 프로젝트 `LICENSE`를 포함한다. 바이너리를 공개 배포할 때는 해당 빌드의 대응 소스를 GPL-3.0-or-later 조건으로 제공해야 한다.
+
+외부 Rust 의존성 고지는 잠긴 `Cargo.lock` 그래프를 기준으로 관리한다. `tools/generate_third_party_notices.py`는 `cargo metadata --locked --format-version 1`에서 workspace 외부 패키지를 수집하고, 요약형 `THIRD_PARTY_NOTICES.txt`를 생성한다. 고지 파일은 대응 소스 안내, 라이선스 표현식 요약, `Third-Party Component Summary`, 배포물에 포함되지 않는 CI/빌드 도구, Cargo 패키지 inventory, 라이선스 계열별 목록, 대표 라이선스 전문을 포함한다. Cargo 밖에 포함된 Google Material Symbols/Icons 리소스는 upstream Apache-2.0 고지와 함께 별도 항목으로 명시한다.
+
+릴리스 바이너리에는 `LICENSE`, `about.txt`, `THIRD_PARTY_NOTICES.txt`를 함께 포함한다. `build_release.py`는 릴리스 빌드, 고지 파일 복사, 소스/바이너리 zip 검증을 완료한 뒤 기본적으로 `target/release` 폴더를 열며, `--no-open` 인자가 있으면 열지 않는다. About 대화상자는 실행 파일 옆 `about.txt`를 우선 표시하고, 파일을 읽을 수 없으면 빌드에 포함된 동일한 기본 내용을 표시해 프로젝트 라이선스, 라이선스 전문 위치, 소스코드 제공 안내, 제3자 고지 파일 위치, GPL 대응 소스 제공 의무를 안내한다.
+
+`rusqlite`는 `libsqlite3-sys`의 `bundled` feature를 사용하므로 릴리스 빌드에 SQLite 소스가 포함될 수 있다. SQLite의 public-domain 상태와 배포 채널별 증빙 필요성은 릴리스 전 법무/배포 정책에서 확인한다. Linux GUI 빌드는 `pkg-config`가 찾는 GTK 네이티브 라이브러리에 링크한다. OS 패키지에 의존하지 않고 GTK stack을 함께 번들링하는 배포 방식이면 해당 네이티브 라이브러리의 라이선스 원문과 재배포 의무를 별도로 포함한다.
+
 ## 삭제 정책
 
 삭제는 물리 삭제가 아니라 `deleted_at`에 삭제 시각을 기록하는 소프트 삭제를 기본 정책으로 둔다. 조회 시 삭제된 노드는 제외한다.
@@ -295,7 +305,9 @@ Windows GUI 실행 파일과 메인 창은 프로젝트 루트의 `icon.ico`를 
 
 Linux GTK4 application id는 `io.github.edgarp9.j3TreeText`다. GTK default icon name과 window `icon_name`도 같은 값을 사용한다. 직접 실행 시에는 실행 파일 폴더 또는 현재 작업 폴더에서 `icon.svg`, `icon.png` 순서로 런타임 아이콘 파일을 찾아 커스텀 타이틀바와 GDK toplevel icon list에 적용한다. `--install`은 XDG user data 경로 아래에 desktop entry와 hicolor 앱 아이콘을 설치하며, 같은 내용을 다시 쓰지 않는 idempotent 동작이다. application id에 ASCII 대문자가 있으므로 KDE/Plasma fallback을 위해 lowercase alias desktop entry/icon을 함께 설치하고, `--uninstall`은 현재 application id, lowercase alias, legacy id의 desktop entry/icon을 제거한다.
 
-`도움말 > j3TreeText 정보`는 앱 버전과 `https://github.com/edgarp9` 링크를 하단에 표시하는 modal about 창을 연다. 한국어 UI에서는 간단한 설명도 함께 표시한다. 영어 UI에서는 `Help > About j3TreeText`로 표시한다. About 창의 링크를 클릭하면 기본 브라우저로 해당 URL을 연다. Windows GUI에서는 about 창을 owner인 메인 창의 중앙에 배치하되, 가능한 경우 현재 모니터 작업 영역 밖으로 벗어나지 않게 보정한다.
+`도움말 > j3TreeText 정보`는 제목이 `About j3TreeText`인 작은 modal about 창을 연다. 상단에는 Cargo 패키지 버전 기반의 `j3TreeText <version>` 라벨을 표시하고, 본문에는 실행 파일 옆 `about.txt` 또는 빌드에 포함된 fallback 내용을 읽기 전용 스크롤 텍스트 영역에 원문 형식대로 표시한다. 하단 왼쪽에는 `https://github.com/edgarp9` URL 버튼 또는 링크를, 하단 오른쪽에는 `OK` 버튼을 둔다. URL을 클릭하면 기본 브라우저로 열고, 실패하면 기존 데스크톱 UI 오류 표시 경로로 사용자에게 알린다. Windows GUI에서는 about 창을 owner인 메인 창의 중앙에 배치하되, 가능한 경우 현재 모니터 작업 영역 밖으로 벗어나지 않게 보정한다.
+
+의존성 또는 포함 리소스가 바뀌면 `python tools/generate_third_party_notices.py`로 `THIRD_PARTY_NOTICES.txt`를 갱신하고, About 창의 고지 파일 안내가 실제 배포 파일과 일치하는지 확인한다. 배포 산출물에는 `LICENSE`, `about.txt`, `THIRD_PARTY_NOTICES.txt`를 함께 포함하고, 바이너리 공개 배포 시 해당 빌드의 대응 소스를 제공한다.
 
 트리 표시 순서는 같은 부모 아래에서 `sort_order`, `title`, `id` 기준으로 정렬한다. 활성 트리에서는 문서 제목만 표시하고, 휴지통에서는 한국어 UI에서 `[삭제됨] 제목`, 영어 UI에서 `[Deleted] 제목` 형식으로 표시한다.
 

@@ -1,18 +1,23 @@
-use std::cell::Cell;
 use std::ptr;
 
-use windows_sys::core::{HRESULT, PCWSTR};
-use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, S_OK, WPARAM};
-use windows_sys::Win32::UI::Controls::{
-    TaskDialogIndirect, TASKDIALOGCONFIG, TASKDIALOGCONFIG_0, TDCBF_OK_BUTTON,
-    TDF_ALLOW_DIALOG_CANCELLATION, TDF_ENABLE_HYPERLINKS, TDF_POSITION_RELATIVE_TO_WINDOW,
-    TDN_HYPERLINK_CLICKED, TD_INFORMATION_ICON,
+use windows_sys::Win32::Foundation::{
+    GetLastError, ERROR_CLASS_ALREADY_EXISTS, HWND, LPARAM, LRESULT, RECT, WPARAM,
 };
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus;
+use windows_sys::Win32::Graphics::Gdi::{COLOR_WINDOW, HBRUSH};
+use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, LoadLibraryW};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+    EnableWindow, IsWindowEnabled, SetActiveWindow, SetFocus,
+};
 use windows_sys::Win32::UI::Shell::ShellExecuteW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, GetWindowThreadProcessId, SendMessageW, SetWindowsHookExW, UnhookWindowsHookEx,
-    HCBT_ACTIVATE, HHOOK, SW_SHOWNORMAL, WH_CBT, WM_CLEAR, WM_COPY, WM_CUT, WM_PASTE, WM_UNDO,
+    CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetClientRect, GetMessageW,
+    IsChild, IsDialogMessageW, IsWindow, LoadCursorW, PostQuitMessage, RegisterClassW,
+    SendMessageW, SetWindowTextW, ShowWindow, TranslateMessage, BS_DEFPUSHBUTTON, ES_AUTOHSCROLL,
+    ES_AUTOVSCROLL, ES_MULTILINE, ES_NOHIDESEL, ES_READONLY, ES_WANTRETURN, HMENU, IDC_ARROW, MSG,
+    SW_SHOW, SW_SHOWNORMAL, WM_CLEAR, WM_CLOSE, WM_COMMAND, WM_COPY, WM_CUT, WM_KEYDOWN, WM_PASTE,
+    WM_UNDO, WNDCLASSW, WS_CAPTION, WS_CHILD, WS_CLIPSIBLINGS, WS_EX_CLIENTEDGE,
+    WS_EX_CONTROLPARENT, WS_EX_DLGMODALFRAME, WS_HSCROLL, WS_POPUP, WS_SYSMENU, WS_TABSTOP,
+    WS_VISIBLE, WS_VSCROLL,
 };
 
 use super::super::common::{
@@ -25,7 +30,9 @@ use super::super::common::{
     COMMAND_MOVE_DOWN, COMMAND_MOVE_UP, COMMAND_NEW_CHILD_DOCUMENT, COMMAND_NEW_DOCUMENT,
     COMMAND_RENAME, COMMAND_REPLACE_TEXT, COMMAND_RESTORE, COMMAND_SAVE_DOCUMENT,
     COMMAND_SHOW_ACTIVE_TREE, COMMAND_SHOW_TRASH, CONTROL_EDITOR_ID, CONTROL_SEARCH_ID,
-    EN_CHANGE_NOTIFICATION_CODE,
+    DOCUMENT_EDITOR_RICH_EDIT_CLASS_NAME, DOCUMENT_EDITOR_RICH_EDIT_TEXT_LIMIT, EMPTY_TEXT,
+    EM_EXLIMITTEXT_RICH_EDIT, EM_SETTEXTMODE_RICH_EDIT, EN_CHANGE_NOTIFICATION_CODE,
+    RICH_EDIT_MODULE_NAME, TM_PLAINTEXT_RICH_EDIT, VK_ESCAPE_KEY,
 };
 use super::super::i18n::ui_text;
 use super::super::layout::center_window_over_owner;
@@ -49,77 +56,21 @@ use super::tree_commands::{
     delete_selected_node, move_selected_node_within_parent, permanently_delete_selected_node,
     rename_selected_node, restore_selected_node, show_tree_mode,
 };
-use crate::domain::SiblingMoveDirection;
+use crate::domain::{app_about_title, app_version_label, SiblingMoveDirection, APP_AUTHOR_URL};
 use crate::error::AppError;
 
-thread_local! {
-    static CENTERED_DIALOG_OWNER: Cell<HWND> = const { Cell::new(ptr::null_mut()) };
-}
-
-struct CenteredDialogHook {
-    hook: HHOOK,
-    previous_owner: HWND,
-}
-
-impl CenteredDialogHook {
-    unsafe fn install(owner: HWND) -> Result<Self, AppError> {
-        let thread_id = GetWindowThreadProcessId(owner, ptr::null_mut());
-        if thread_id == 0 {
-            return Err(last_win32_error("read owner window thread"));
-        }
-
-        let previous_owner = CENTERED_DIALOG_OWNER.with(|slot| {
-            let previous = slot.get();
-            slot.set(owner);
-            previous
-        });
-
-        let hook = SetWindowsHookExW(
-            WH_CBT,
-            Some(center_message_box_hook_proc),
-            ptr::null_mut(),
-            thread_id,
-        );
-        if hook.is_null() {
-            CENTERED_DIALOG_OWNER.with(|slot| slot.set(previous_owner));
-            return Err(last_win32_error("install dialog placement hook"));
-        }
-
-        Ok(Self {
-            hook,
-            previous_owner,
-        })
-    }
-}
-
-impl Drop for CenteredDialogHook {
-    fn drop(&mut self) {
-        if !self.hook.is_null() {
-            unsafe {
-                UnhookWindowsHookEx(self.hook);
-            }
-        }
-
-        CENTERED_DIALOG_OWNER.with(|slot| slot.set(self.previous_owner));
-    }
-}
-
-unsafe extern "system" fn center_message_box_hook_proc(
-    code: i32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
-    if code == HCBT_ACTIVATE as i32 {
-        CENTERED_DIALOG_OWNER.with(|slot| {
-            let owner = slot.get();
-            if !owner.is_null() {
-                let _ = center_window_over_owner(wparam as HWND, owner);
-            }
-        });
-    }
-
-    CallNextHookEx(ptr::null_mut(), code, wparam, lparam)
-}
+const ABOUT_DIALOG_CLASS_NAME: &str = "j3TreeTextAboutDialogClass";
+const STATIC_CONTROL_CLASS_NAME: &str = "STATIC";
+const BUTTON_CONTROL_CLASS_NAME: &str = "BUTTON";
+const ABOUT_DIALOG_WIDTH: i32 = 540;
+const ABOUT_DIALOG_HEIGHT: i32 = 320;
+const ABOUT_DIALOG_MARGIN: i32 = 12;
+const ABOUT_DIALOG_CONTROL_GAP: i32 = 8;
+const ABOUT_VERSION_LABEL_HEIGHT: i32 = 22;
+const ABOUT_BUTTON_HEIGHT: i32 = 26;
+const ABOUT_OK_BUTTON_WIDTH: i32 = 80;
+const ABOUT_LINK_CONTROL_ID: usize = 1;
+const ABOUT_OK_CONTROL_ID: usize = 2;
 
 unsafe fn handle_editor_changed(hwnd: HWND) -> Result<(), AppError> {
     let Some(mut state) = window_state(hwnd) else {
@@ -259,78 +210,474 @@ unsafe fn refresh_caret_status(hwnd: HWND) -> Result<(), AppError> {
 
 unsafe fn show_about_dialog(hwnd: HWND) -> Result<(), AppError> {
     let text = ui_text(window_language(hwnd));
-    let title = utf8_to_wide_null("convert about title", text.about_title())?;
-    let content = text.about_hyperlink_content(env!("CARGO_PKG_VERSION"));
+    let title = app_about_title();
+    let title = utf8_to_wide_null("convert about title", &title)?;
+    let version_label = app_version_label();
+    let version_label = utf8_to_wide_null("convert about version label", &version_label)?;
+    let content = text.about_message(env!("CARGO_PKG_VERSION"));
     let content = utf8_to_wide_null("convert about content", &content)?;
-    let mut callback_state = AboutDialogCallbackState::default();
-    let config = TASKDIALOGCONFIG {
-        cbSize: std::mem::size_of::<TASKDIALOGCONFIG>() as u32,
-        hwndParent: hwnd,
-        dwFlags: TDF_ENABLE_HYPERLINKS
-            | TDF_ALLOW_DIALOG_CANCELLATION
-            | TDF_POSITION_RELATIVE_TO_WINDOW,
-        dwCommonButtons: TDCBF_OK_BUTTON,
-        pszWindowTitle: title.as_ptr(),
-        Anonymous1: TASKDIALOGCONFIG_0 {
-            pszMainIcon: TD_INFORMATION_ICON,
-        },
-        pszContent: content.as_ptr(),
-        pfCallback: Some(about_task_dialog_callback),
-        lpCallbackData: &mut callback_state as *mut AboutDialogCallbackState as isize,
-        ..Default::default()
+    let project_url = utf8_to_wide_null("convert about project URL", APP_AUTHOR_URL)?;
+
+    let (dialog_width, dialog_height) = about_dialog_size(hwnd);
+    show_about_modal_dialog(
+        hwnd,
+        &title,
+        &version_label,
+        &content,
+        &project_url,
+        text.ok_button(),
+        dialog_width,
+        dialog_height,
+    )?;
+
+    Ok(())
+}
+
+struct AboutDialog {
+    hwnd: HWND,
+    ok_button: HWND,
+}
+
+unsafe fn show_about_modal_dialog(
+    owner: HWND,
+    title: &[u16],
+    version_label: &[u16],
+    content: &[u16],
+    project_url: &[u16],
+    ok_button_text: &str,
+    dialog_width: i32,
+    dialog_height: i32,
+) -> Result<(), AppError> {
+    let ok_button_text = utf8_to_wide_null("convert about OK button text", ok_button_text)?;
+    let dialog = create_about_dialog(
+        owner,
+        title,
+        version_label,
+        content,
+        project_url,
+        &ok_button_text,
+        dialog_width,
+        dialog_height,
+    )?;
+    if let Err(error) = center_window_over_owner(dialog.hwnd, owner) {
+        DestroyWindow(dialog.hwnd);
+        return Err(error);
+    }
+
+    let _disabled_owner = DisabledOwnerWindow::disable(owner);
+    ShowWindow(dialog.hwnd, SW_SHOW);
+    SetFocus(dialog.ok_button);
+    run_modal_dialog_loop(dialog.hwnd, "read about dialog message")
+}
+
+unsafe fn create_about_dialog(
+    owner: HWND,
+    title: &[u16],
+    version_label: &[u16],
+    content: &[u16],
+    project_url: &[u16],
+    ok_button_text: &[u16],
+    dialog_width: i32,
+    dialog_height: i32,
+) -> Result<AboutDialog, AppError> {
+    register_about_dialog_class()?;
+    ensure_dialog_rich_edit_module_loaded()?;
+
+    let instance = GetModuleHandleW(ptr::null());
+    if instance.is_null() {
+        return Err(last_win32_error("get module handle for about dialog"));
+    }
+
+    let class_name = utf8_to_wide_null("convert about dialog class name", ABOUT_DIALOG_CLASS_NAME)?;
+    let hwnd = CreateWindowExW(
+        WS_EX_DLGMODALFRAME | WS_EX_CONTROLPARENT,
+        class_name.as_ptr(),
+        title.as_ptr(),
+        about_dialog_style(),
+        0,
+        0,
+        dialog_width,
+        dialog_height,
+        owner,
+        ptr::null_mut(),
+        instance,
+        ptr::null(),
+    );
+    if hwnd.is_null() {
+        return Err(last_win32_error("create about dialog"));
+    }
+
+    let result = create_about_dialog_controls(
+        hwnd,
+        instance,
+        version_label,
+        content,
+        project_url,
+        ok_button_text,
+    )
+    .map(|ok_button| AboutDialog { hwnd, ok_button });
+    if result.is_err() {
+        DestroyWindow(hwnd);
+    }
+    result
+}
+
+unsafe fn about_dialog_size(owner: HWND) -> (i32, i32) {
+    window_state(owner)
+        .map(|state| {
+            (
+                state.ui_scale.px(ABOUT_DIALOG_WIDTH),
+                state.ui_scale.px(ABOUT_DIALOG_HEIGHT),
+            )
+        })
+        .unwrap_or((ABOUT_DIALOG_WIDTH, ABOUT_DIALOG_HEIGHT))
+}
+
+unsafe fn register_about_dialog_class() -> Result<(), AppError> {
+    let instance = GetModuleHandleW(ptr::null());
+    if instance.is_null() {
+        return Err(last_win32_error("get module handle for about dialog class"));
+    }
+
+    let class_name = utf8_to_wide_null("convert about dialog class name", ABOUT_DIALOG_CLASS_NAME)?;
+    let cursor = LoadCursorW(ptr::null_mut(), IDC_ARROW);
+    if cursor.is_null() {
+        return Err(last_win32_error("load about dialog cursor"));
+    }
+
+    let window_class = WNDCLASSW {
+        style: 0,
+        lpfnWndProc: Some(about_dialog_proc),
+        cbClsExtra: 0,
+        cbWndExtra: 0,
+        hInstance: instance,
+        hIcon: ptr::null_mut(),
+        hCursor: cursor,
+        hbrBackground: (COLOR_WINDOW + 1) as usize as HBRUSH,
+        lpszMenuName: ptr::null(),
+        lpszClassName: class_name.as_ptr(),
     };
 
-    let _placement_hook = CenteredDialogHook::install(hwnd)?;
-    let task_result =
-        TaskDialogIndirect(&config, ptr::null_mut(), ptr::null_mut(), ptr::null_mut());
-    if task_result < 0 {
-        return Err(AppError::platform(
-            "show about dialog",
-            format!(
-                "TaskDialogIndirect returned HRESULT 0x{:08X}",
-                task_result as u32
-            ),
-        ));
-    }
-    if let Some(code) = callback_state.open_link_error {
-        return Err(AppError::platform(
-            "open about link",
-            format!("ShellExecuteW returned {code}"),
-        ));
+    let atom = RegisterClassW(&window_class);
+    if atom == 0 {
+        let code = GetLastError();
+        if code != ERROR_CLASS_ALREADY_EXISTS {
+            return Err(last_win32_error("register about dialog class"));
+        }
     }
 
     Ok(())
 }
 
-#[derive(Default)]
-struct AboutDialogCallbackState {
-    open_link_error: Option<isize>,
+unsafe fn create_about_dialog_controls(
+    parent: HWND,
+    instance: windows_sys::Win32::Foundation::HINSTANCE,
+    version_label: &[u16],
+    content: &[u16],
+    project_url: &[u16],
+    ok_button_text: &[u16],
+) -> Result<HWND, AppError> {
+    let mut rect = RECT::default();
+    if GetClientRect(parent, &mut rect) == 0 {
+        return Err(last_win32_error("read about dialog client area"));
+    }
+
+    let client_width = rect.right - rect.left;
+    let client_height = rect.bottom - rect.top;
+    let content_width = (client_width - ABOUT_DIALOG_MARGIN * 2).max(0);
+    let text_y = ABOUT_DIALOG_MARGIN + ABOUT_VERSION_LABEL_HEIGHT + ABOUT_DIALOG_CONTROL_GAP;
+    let button_y = (client_height - ABOUT_DIALOG_MARGIN - ABOUT_BUTTON_HEIGHT).max(0);
+    let text_height = (button_y - ABOUT_DIALOG_CONTROL_GAP - text_y).max(0);
+
+    let static_class =
+        utf8_to_wide_null("convert about static class name", STATIC_CONTROL_CLASS_NAME)?;
+    let version = CreateWindowExW(
+        0,
+        static_class.as_ptr(),
+        version_label.as_ptr(),
+        about_label_style(),
+        ABOUT_DIALOG_MARGIN,
+        ABOUT_DIALOG_MARGIN,
+        content_width,
+        ABOUT_VERSION_LABEL_HEIGHT,
+        parent,
+        ptr::null_mut(),
+        instance,
+        ptr::null(),
+    );
+    if version.is_null() {
+        return Err(last_win32_error("create about version label"));
+    }
+
+    let rich_edit_class = utf8_to_wide_null(
+        "convert about Rich Edit class name",
+        DOCUMENT_EDITOR_RICH_EDIT_CLASS_NAME,
+    )?;
+    let about_text = CreateWindowExW(
+        WS_EX_CLIENTEDGE,
+        rich_edit_class.as_ptr(),
+        EMPTY_TEXT.as_ptr(),
+        dialog_text_control_style(),
+        ABOUT_DIALOG_MARGIN,
+        text_y,
+        content_width,
+        text_height,
+        parent,
+        ptr::null_mut(),
+        instance,
+        ptr::null(),
+    );
+    if about_text.is_null() {
+        return Err(last_win32_error("create about text control"));
+    }
+    configure_dialog_text_control(about_text, content)?;
+
+    let button_class =
+        utf8_to_wide_null("convert about button class name", BUTTON_CONTROL_CLASS_NAME)?;
+    let ok_button_x = (client_width - ABOUT_DIALOG_MARGIN - ABOUT_OK_BUTTON_WIDTH).max(0);
+    let link_width = (ok_button_x - ABOUT_DIALOG_MARGIN * 2 - ABOUT_DIALOG_CONTROL_GAP).max(0);
+    let link_button = CreateWindowExW(
+        0,
+        button_class.as_ptr(),
+        project_url.as_ptr(),
+        about_link_button_style(),
+        ABOUT_DIALOG_MARGIN,
+        button_y,
+        link_width,
+        ABOUT_BUTTON_HEIGHT,
+        parent,
+        ABOUT_LINK_CONTROL_ID as HMENU,
+        instance,
+        ptr::null(),
+    );
+    if link_button.is_null() {
+        return Err(last_win32_error("create about project URL button"));
+    }
+
+    let ok_button = CreateWindowExW(
+        0,
+        button_class.as_ptr(),
+        ok_button_text.as_ptr(),
+        dialog_ok_button_style(),
+        ok_button_x,
+        button_y,
+        ABOUT_OK_BUTTON_WIDTH,
+        ABOUT_BUTTON_HEIGHT,
+        parent,
+        ABOUT_OK_CONTROL_ID as HMENU,
+        instance,
+        ptr::null(),
+    );
+    if ok_button.is_null() {
+        return Err(last_win32_error("create about OK button"));
+    }
+
+    Ok(ok_button)
 }
 
-unsafe extern "system" fn about_task_dialog_callback(
+fn about_dialog_style() -> u32 {
+    WS_POPUP | WS_CAPTION | WS_SYSMENU
+}
+
+fn about_label_style() -> u32 {
+    WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS
+}
+
+fn about_link_button_style() -> u32 {
+    WS_CHILD | WS_VISIBLE | WS_TABSTOP
+}
+
+unsafe fn open_about_project_url(owner: HWND) -> Result<(), AppError> {
+    let operation = utf8_to_wide_null("convert about link operation", "open")?;
+    let url = utf8_to_wide_null("convert about link URL", APP_AUTHOR_URL)?;
+    let result = ShellExecuteW(
+        owner,
+        operation.as_ptr(),
+        url.as_ptr(),
+        ptr::null(),
+        ptr::null(),
+        SW_SHOWNORMAL,
+    ) as isize;
+
+    if result <= 32 {
+        Err(AppError::platform(
+            "open about link",
+            format!("ShellExecuteW returned {result}"),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+unsafe extern "system" fn about_dialog_proc(
     hwnd: HWND,
     message: u32,
-    _wparam: WPARAM,
+    wparam: WPARAM,
     lparam: LPARAM,
-    callback_data: isize,
-) -> HRESULT {
-    if message == TDN_HYPERLINK_CLICKED as u32 {
-        let result = ShellExecuteW(
+) -> LRESULT {
+    match message {
+        WM_COMMAND => {
+            let command_id = wparam & 0xffff;
+            match command_id {
+                ABOUT_LINK_CONTROL_ID => {
+                    if let Err(error) = open_about_project_url(hwnd) {
+                        show_app_error(hwnd, &error);
+                    }
+                    return 0;
+                }
+                ABOUT_OK_CONTROL_ID => {
+                    DestroyWindow(hwnd);
+                    return 0;
+                }
+                _ => {}
+            }
+        }
+        WM_CLOSE => {
+            DestroyWindow(hwnd);
+            return 0;
+        }
+        _ => {}
+    }
+
+    DefWindowProcW(hwnd, message, wparam, lparam)
+}
+
+struct DisabledOwnerWindow {
+    hwnd: HWND,
+    should_reenable: bool,
+}
+
+impl DisabledOwnerWindow {
+    unsafe fn disable(hwnd: HWND) -> Self {
+        if hwnd.is_null() {
+            return Self {
+                hwnd,
+                should_reenable: false,
+            };
+        }
+
+        let was_enabled = IsWindowEnabled(hwnd) != 0;
+        EnableWindow(hwnd, 0);
+        Self {
             hwnd,
-            ptr::null(),
-            lparam as PCWSTR,
-            ptr::null(),
-            ptr::null(),
-            SW_SHOWNORMAL,
-        ) as isize;
-        if result <= 32 {
-            let state = (callback_data as *mut AboutDialogCallbackState).as_mut();
-            if let Some(state) = state {
-                state.open_link_error = Some(result);
+            should_reenable: was_enabled,
+        }
+    }
+}
+
+impl Drop for DisabledOwnerWindow {
+    fn drop(&mut self) {
+        if self.should_reenable && !self.hwnd.is_null() {
+            unsafe {
+                EnableWindow(self.hwnd, 1);
+                SetActiveWindow(self.hwnd);
             }
         }
     }
-    S_OK
+}
+
+unsafe fn ensure_dialog_rich_edit_module_loaded() -> Result<(), AppError> {
+    let library_name = utf8_to_wide_null(
+        "convert dialog Rich Edit module name",
+        RICH_EDIT_MODULE_NAME,
+    )?;
+    let existing = GetModuleHandleW(library_name.as_ptr());
+    if !existing.is_null() {
+        return Ok(());
+    }
+
+    let module = LoadLibraryW(library_name.as_ptr());
+    if module.is_null() {
+        return Err(last_win32_error("load dialog Rich Edit library"));
+    }
+
+    Ok(())
+}
+
+unsafe fn configure_dialog_text_control(hwnd: HWND, content: &[u16]) -> Result<(), AppError> {
+    let text_mode_result = SendMessageW(hwnd, EM_SETTEXTMODE_RICH_EDIT, TM_PLAINTEXT_RICH_EDIT, 0);
+    if text_mode_result != 0 {
+        return Err(AppError::platform(
+            "set dialog Rich Edit plain text mode",
+            format!("Rich Edit rejected plain text mode with result {text_mode_result}"),
+        ));
+    }
+
+    SendMessageW(
+        hwnd,
+        EM_EXLIMITTEXT_RICH_EDIT,
+        0,
+        DOCUMENT_EDITOR_RICH_EDIT_TEXT_LIMIT as LPARAM,
+    );
+
+    if SetWindowTextW(hwnd, content.as_ptr()) == 0 {
+        return Err(last_win32_error("set dialog text"));
+    }
+
+    Ok(())
+}
+
+fn dialog_text_control_style() -> u32 {
+    WS_CHILD
+        | WS_VISIBLE
+        | WS_TABSTOP
+        | WS_CLIPSIBLINGS
+        | WS_VSCROLL
+        | WS_HSCROLL
+        | ES_MULTILINE as u32
+        | ES_AUTOVSCROLL as u32
+        | ES_AUTOHSCROLL as u32
+        | ES_READONLY as u32
+        | ES_NOHIDESEL as u32
+        | ES_WANTRETURN as u32
+}
+
+fn dialog_ok_button_style() -> u32 {
+    WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON as u32
+}
+
+unsafe fn run_modal_dialog_loop(
+    dialog: HWND,
+    read_message_action: &'static str,
+) -> Result<(), AppError> {
+    let mut message: MSG = std::mem::zeroed();
+
+    while IsWindow(dialog) != 0 {
+        let result = GetMessageW(&mut message, ptr::null_mut(), 0, 0);
+        if result == -1 {
+            return Err(last_win32_error(read_message_action));
+        }
+        if result == 0 {
+            PostQuitMessage(message.wParam as i32);
+            return Ok(());
+        }
+
+        if modal_dialog_handles_escape(dialog, &message) {
+            continue;
+        }
+
+        if IsDialogMessageW(dialog, &message) != 0 {
+            continue;
+        }
+
+        TranslateMessage(&message);
+        DispatchMessageW(&message);
+    }
+
+    Ok(())
+}
+
+unsafe fn modal_dialog_handles_escape(dialog: HWND, message: &MSG) -> bool {
+    if message.message != WM_KEYDOWN || message.wParam != VK_ESCAPE_KEY || message.hwnd.is_null() {
+        return false;
+    }
+
+    if message.hwnd == dialog || IsChild(dialog, message.hwnd) != 0 {
+        DestroyWindow(dialog);
+        return true;
+    }
+
+    false
 }
 
 #[cfg(test)]
@@ -529,6 +876,57 @@ mod tests {
             assert!(
                 body.contains(&compact(arm)),
                 "{command:?} must be dispatched by handle_command through {constant_name}"
+            );
+        }
+    }
+
+    #[test]
+    fn win32_about_dialog_uses_native_scroll_body_and_project_url_button() {
+        let source = include_str!("dispatch.rs");
+        assert!(source.contains("const ABOUT_DIALOG_WIDTH: i32 = 540;"));
+        assert!(source.contains("const ABOUT_DIALOG_HEIGHT: i32 = 320;"));
+
+        let show_body = compact(rust_function_body(source, "show_about_dialog"));
+        for snippet in [
+            "let title = app_about_title();",
+            "let version_label = app_version_label();",
+            "let content = text.about_message(env!(\"CARGO_PKG_VERSION\"));",
+            "let project_url = utf8_to_wide_null(\"convert about project URL\", APP_AUTHOR_URL)?;",
+            "show_about_modal_dialog(",
+        ] {
+            assert!(
+                show_body.contains(&compact(snippet)),
+                "about dialog show path should contain `{snippet}`"
+            );
+        }
+
+        let controls_body = compact(rust_function_body(source, "create_about_dialog_controls"));
+        for snippet in [
+            "STATIC_CONTROL_CLASS_NAME",
+            "version_label.as_ptr()",
+            "dialog_text_control_style()",
+            "configure_dialog_text_control(about_text, content)?;",
+            "project_url.as_ptr()",
+            "ABOUT_LINK_CONTROL_ID as HMENU",
+            "ABOUT_OK_CONTROL_ID as HMENU",
+        ] {
+            assert!(
+                controls_body.contains(&compact(snippet)),
+                "about dialog controls should contain `{snippet}`"
+            );
+        }
+
+        let proc_body = compact(rust_function_body(source, "about_dialog_proc"));
+        for snippet in [
+            "ABOUT_LINK_CONTROL_ID => {",
+            "open_about_project_url(hwnd)",
+            "show_app_error(hwnd, &error);",
+            "ABOUT_OK_CONTROL_ID => {",
+            "DestroyWindow(hwnd);",
+        ] {
+            assert!(
+                proc_body.contains(&compact(snippet)),
+                "about dialog proc should contain `{snippet}`"
             );
         }
     }
